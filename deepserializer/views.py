@@ -1,6 +1,9 @@
 """
-A unique viewset for all your need of deep read and deep write, made easy
+A unique view-set for all your need of deep read and deep write, made easy
 """
+from pprint import pprint
+
+from django.db import connection
 from django.db.models import Model
 from rest_framework import status
 from rest_framework.decorators import action
@@ -17,7 +20,8 @@ from .serializers import DeepSerializer
 
 class ReadOnlyDeepViewSet(ReadOnlyModelViewSet):
     """
-    A read-only viewset that provides deep read functionality. This viewset is designed to make deep reading and writing easier.
+    A read-only view-set that provides deep read functionality.
+    This view-set is designed to make deep reading and writing easier.
 
     """
     _viewsets = {}
@@ -26,7 +30,8 @@ class ReadOnlyDeepViewSet(ReadOnlyModelViewSet):
     def __init_subclass__(cls, **kwargs):
         """
         Initializes subclasses of ReadOnlyDeepViewSet.
-        It saves important information such as all the viewsets inheriting this class and all possible fields for filtering or ordering the queryset.
+        It saves important information such as all the view-sets inheriting this class
+        and all possible fields for filtering or ordering the queryset.
 
         Args:
             kwargs: Additional keyword arguments.
@@ -67,7 +72,7 @@ class ReadOnlyDeepViewSet(ReadOnlyModelViewSet):
     @classmethod
     def init_router(cls, router, models: list) -> None:
         """
-        Creates viewsets for all the models and registers them in the router.
+        Creates view-sets for all the models and registers them in the router.
 
         Args:
             router: A rest_framework router.
@@ -78,7 +83,8 @@ class ReadOnlyDeepViewSet(ReadOnlyModelViewSet):
 
     def get_serializer(self, *args, **kwargs):
         """
-        Returns the serializer instance that should be used for validating and deserializing input, and for serializing output.
+        Returns the serializer instance that should be used for validating and deserializing input,
+        and for serializing output.
         The depth of serialization and the relationships paths are determined based on the request parameters.
 
         Args:
@@ -92,14 +98,15 @@ class ReadOnlyDeepViewSet(ReadOnlyModelViewSet):
             params = self.request.query_params
             serializer_class = self.get_serializer_class()
             kwargs.setdefault('context', self.get_serializer_context())
-            depth = int(params.get("depth", serializer_class.Meta.original_depth))
+            excludes = set(params.get("exclude", "").split(","))
             return serializer_class(
                 *args,
-                depth=depth,
-                relations_paths=serializer_class.get_relationships_paths(
-                    excludes=params.get("exclude", "").split(","),
-                    depth=depth
-                ),
+                depth=int(params.get("depth", serializer_class.Meta.original_depth)),
+                relations_paths={
+                    path
+                    for path in serializer_class._all_related_paths
+                    if not any(path.startswith(exclude) for exclude in excludes if exclude)
+                },
                 **kwargs
             )
         else:
@@ -107,56 +114,53 @@ class ReadOnlyDeepViewSet(ReadOnlyModelViewSet):
 
     def get_queryset(self):
         """
-        Modifies the queryset based on the request parameters to filter, sort, and control the depth of the data returned.
+        Modifies the queryset based on the request parameters
+        to filter, sort, and control the depth of the data returned.
 
         Filtering is done by specifying 'field_name=value' in the request parameters.
         Nested model fields can be filtered with 'field_name__field_name=value'.
-        Sorting is specified with 'order_by=field_name'. If 'order_by' is a list, it will sort in the order of the list.
+        Sorting is specified with 'order_by=field_name'.
+        If 'order_by' is a list, it will sort in the order of the list.
         The depth of the model display can be controlled with 'depth=10'.
-        To exclude nested models, use 'exclude=foo,bar'. If the nested model to exclude is nested in another model, separate them with '__'.
+        To exclude nested models, use 'exclude=foo,bar'.
+        If the nested model to exclude is nested in another model, separate them with '__'.
 
         Returns:
             QuerySet: The modified queryset.
         """
         params = self.request.query_params
         serializer_class = self.get_serializer_class()
-        depth = int(params.get("depth", serializer_class.Meta.original_depth))
+        excludes = set(params.get("exclude", "").split(","))
         queryset = serializer_class.optimize_queryset(
             self.queryset,
-            depth,
-            serializer_class.get_relationships_paths(
-                excludes=params.get("exclude", "").split(","),
-                depth=depth
-            )
+            {
+                path
+                for path in serializer_class._all_related_paths
+                if not any(path.startswith(exclude) for exclude in excludes if exclude)
+            },
+            int(params.get("depth", serializer_class.Meta.original_depth))
         )
-        if filter_by := {
-            field: value
-            for field, value in params.items()
-            if field in self._possible_fields
-        }:
+        if filter_by := {field: value for field, value in params.items() if field in self._possible_fields}:
             queryset = queryset.filter(**filter_by)
-        if order_by := [
-            field
-            for field in params.get("order_by", "").split(",")
-            if field in self._possible_fields
-        ]:
+        if order_by := [field for field in params.get("order_by", "").split(",") if field in self._possible_fields]:
             queryset = queryset.order_by(*order_by)
         return queryset
 
     @classmethod
     def get_view_set_class(cls, model: Model, use_case: str = ""):
         """
-        Retrieves or creates a viewset for the specified model and use case.
-        Manually created viewsets inheriting DeepViewSet will automatically be used for their use case.
+        Retrieves or creates a view-set for the specified model and use case.
+        Manually created view-sets inheriting DeepViewSet will automatically be used for their use case.
 
-        If your viewset is only used in a specific use case, specify it in the use_case parameter.
+        If your view-set is only used in a specific use case, specify it in the use_case parameter.
 
         Args:
-            model (Model): The model related to the desired viewset.
-            use_case (str): The use case that this viewset will be used for. If empty, it will be the main viewset for this model.
+            model (Model): The model related to the desired view-set.
+            use_case (str): The use case that this view-set will be used for.
+                            If empty, it will be the main view-set for this model.
 
         Returns:
-            ViewSet: The viewset for the specified model and use case.
+            ViewSet: The view-set for the specified model and use case.
         """
         view_set_name = use_case + model.__name__ + "ViewSet"
         if view_set_name not in cls._viewsets:
@@ -178,23 +182,23 @@ class ReadOnlyDeepViewSet(ReadOnlyModelViewSet):
 
 class DeepViewSet(ReadOnlyDeepViewSet, ModelViewSet):
     """
-    A viewset that provides deep read and write functionality. This viewset is designed to make deep reading and writing easier.
-
+    A view-set that provides deep read and write functionality.
+    This view-set is designed to make deep reading and writing easier.
     """
     use_case = ""
 
 
 class DeepCreateViewSet(DeepViewSet):
     """
-    A viewset that provides the action 'deep_create' for the deep_update_or_create function. This viewset is designed to have a ready made viewset for creating or updating nested model.
-
+    A view-set that provides the action 'deep_create' for the deep_update_or_create function.
+    This view-set is designed to have a ready-made view-set for creating or updating nested model.
     """
-
     @action(detail=False, methods=['post'])
     def deep_create(self, request):
-        serializer = self.get_serializer()
-        results = serializer.deep_update_or_create(self.queryset.model, request.data, raise_exception=True)
-        return Response(results, status=status.HTTP_201_CREATED)
+        return Response(
+            self.get_serializer().deep_update_or_create(self.queryset.model, request.data, raise_exception=True),
+            status=status.HTTP_201_CREATED
+        )
 
 ###################################################################################################
 #
